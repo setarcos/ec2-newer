@@ -23,12 +23,13 @@
 #include <getopt.h>
 #include <signal.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include "ec2drv.h"
 using namespace std;
 
 
 static EC2DRV obj;
-static sighandler_t old_sigint_handler;
+static void (*old_sigint_handler)(int);
 
 void help();
 void print_buf( char *buf, int len );
@@ -390,7 +391,7 @@ bool test_xdata_ram( EC2DRV &obj )
 	print_test("XDATA RAM - onchip");
 #if 1
 	print_subtest("write / read 0x00");
-	memset( write_buf, 0, sizeof(write_buf) );
+	memset( write_buf, 0, size );
 	ec2_write_xdata( &obj, write_buf, 0, size );
 	memset( read_buf, 0xff, size );
 	ec2_read_xdata( &obj, read_buf, 0, size );
@@ -691,7 +692,7 @@ bool test_flash_scratchpad( EC2DRV &obj )
 {
 	bool test_pass=true;
 	uint32_t addr;
-	
+	printf("dss %d",obj.dev->has_scratchpad);
 	if( !obj.dev->has_scratchpad )
 		return TRUE;
 	uint8_t *tbuf = (uint8_t*)malloc( obj.dev->scratchpad_len );
@@ -788,7 +789,7 @@ bool test_pc_access( EC2DRV &obj )
 
 	print_subtest("PC = random");
 	const int NUM_TESTS = 100;
-	srand( time(0) );	
+	srand( time(0) );
 	pass = true;
 	for(int i=0; i<NUM_TESTS; i++)
 	{

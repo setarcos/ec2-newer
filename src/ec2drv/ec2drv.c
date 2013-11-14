@@ -65,7 +65,7 @@ BOOL ec2_write_flash_jtag( EC2DRV *obj, char *buf,
 						   uint32_t start_addr, uint32_t len );
 uint16_t device_id( EC2DRV *obj );
 
-static BOOL check_flash_range( EC2DRV *obj, uint32_t addr, uint32_t len );
+static BOOL check_flash_range( EC2DRV *obj, uint32_t addr, int len );
 static BOOL check_scratchpad_range( EC2DRV *obj, uint32_t addr, uint32_t len );
 
 /** Suspend the target core.
@@ -115,7 +115,7 @@ static DBG_ADAPTER_INFO debugger_info[] =
 	.usb_out_endpoint = 0x02,
 	.usb_in_endpoint  = 0x81,
 	.has_bootloader	= TRUE,
-	.min_ver		= 0x07,
+	.min_ver		= 0x01,
 	.max_ver		= 0x0e
 	},
 	{
@@ -193,7 +193,7 @@ BOOL ec2_connect( EC2DRV *obj, const char *port )
 	
 	if( !open_port( obj, lport) )
 	{
-		printf("Coulden't connect to %s\n", obj->dbg_adaptor==EC2 ? "EC2" : "EC3");
+		printf("Couldn't connect to %s\n", obj->dbg_adaptor==EC2 ? "EC2" : "EC3");
 		return FALSE;
 	}
 	obj->connected=TRUE;
@@ -388,10 +388,10 @@ void ec2_disconnect( EC2DRV *obj )
 			c2_disconnect_target(obj);
 			write_usb_ch(obj, 0xff);	// turn off debugger
 			r = usb_release_interface(obj->ec3, 0);
-			assert(r == 0);
+			//assert(r == 0);
 			usb_reset(obj->ec3);
 			r = usb_close( obj->ec3);
-			assert(r == 0);
+			//assert(r == 0);
 			DUMP_FUNC_END();
 			return;
 		}
@@ -421,8 +421,8 @@ static uint8_t sfr_fixup( uint8_t addr )
 	switch( addr )
 	{
 		case 0xa9:	return 0x2b;	// CKLSEL
-		case 0xb7:	return 0x2a;		// FLKEY
-		case 0x8f:	return 0x29;	// PSCTL
+		//case 0xb7:	return 0x2a;		// FLKEY
+		//case 0x8f:	return 0x29;	// PSCTL
 		case 0x82:	return 0x27;	// DPL
 		case 0x83:	return 0x28;	// DPH
 		case 0xD0:	return 0x23;	// PSW
@@ -444,7 +444,12 @@ static uint8_t sfr_fixup( uint8_t addr )
 void ec2_read_sfr( EC2DRV *obj, char *buf, uint8_t addr )
 {
 	DUMP_FUNC();
-	assert( addr >= 0x80 );
+	if (addr > 0xff){
+		addr = 0xff;
+	}
+	if (addr < 0x80){
+		addr = 0x80;
+	}
 	ec2_read_ram_sfr( obj, buf, sfr_fixup( addr ), 1, TRUE );
 	DUMP_FUNC_END();
 }
@@ -471,7 +476,12 @@ void ec2_read_sfr( EC2DRV *obj, char *buf, uint8_t addr )
 void ec2_write_sfr( EC2DRV *obj, uint8_t value, uint8_t addr )
 {
 	DUMP_FUNC();
-	assert( addr >= 0x80 );
+	if (addr > 0xff){
+		addr = 0xff;
+	}
+	if (addr < 0x80){
+		addr = 0x80;
+	}
 
 	if( obj->mode==JTAG )
 		jtag_write_sfr( obj, value, sfr_fixup( addr ) );
@@ -613,7 +623,15 @@ void ec2_read_ram( EC2DRV *obj, char *buf, int start_addr, int len )
 void ec2_read_ram_sfr( EC2DRV *obj, char *buf, int start_addr, int len, BOOL sfr )
 {
 	DUMP_FUNC();
-	assert( (int)start_addr+len-1 <= 0xFF ); // -1 to allow reading 1 byte at 0xFF
+	if ((int)start_addr < 0){
+		start_addr = 0;
+	}
+	if ((int)start_addr > 0xff){
+		start_addr = 0xff;
+	}
+	if ((int)start_addr+len > 0xff){
+		len = 0x100 - (int)start_addr;
+	}
 
 	if( obj->mode == JTAG )
 		jtag_read_ram_sfr( obj, buf, start_addr, len, sfr );
@@ -637,7 +655,15 @@ BOOL ec2_write_ram( EC2DRV *obj, char *buf, int start_addr, int len )
 	DUMP_FUNC();
 	BOOL r = FALSE;
 	
-	assert( start_addr>=0 && start_addr<=0xFF );
+	if ((int)start_addr < 0){
+		start_addr = 0;
+	}
+	if ((int)start_addr > 0xff){
+		start_addr = 0xff;
+	}
+	if ((int)start_addr+len > 0xff){
+		len = 0x100 - (int)start_addr;
+	}
 	// printf("start addr = 0x%02x\n",start_addr);
 	if( obj->mode == JTAG )
 		r = jtag_write_ram( obj, buf, start_addr, len );
@@ -720,7 +746,7 @@ BOOL ec2_read_flash( EC2DRV *obj, uint8_t *buf, uint32_t start_addr, int len )
 	if( obj->mode==JTAG )
 		r = jtag_read_flash( obj, buf, start_addr, len, FALSE );
 	else if( obj->mode==C2 )
-		r = c2_read_flash( obj, buf, start_addr, len );
+		r = c2_read_flash( obj, buf, start_addr, len, FALSE );
 	DUMP_FUNC_END();
 	return r;
 }
@@ -762,7 +788,7 @@ BOOL ec2_write_flash( EC2DRV *obj, uint8_t *buf, uint32_t start_addr, int len )
 	if(!check_flash_range( obj, start_addr, len )) return FALSE;
 	
 	if( obj->mode==C2 )
-		r = c2_write_flash( obj, buf, start_addr, len );
+		r = c2_write_flash( obj, buf, start_addr, len, FALSE );
 	else
 		r = jtag_write_flash( obj, buf, start_addr, len );
 	DUMP_FUNC_END();
@@ -784,7 +810,8 @@ BOOL ec2_write_flash_auto_erase( EC2DRV *obj, uint8_t *buf,
 								 uint32_t start_addr, int len )
 {
 	DUMP_FUNC();
-	if(!check_flash_range( obj, start_addr, len )) return FALSE;
+	if(!check_flash_range( obj, start_addr, len ))
+		return FALSE;
 	
 	if( obj->mode==JTAG )
 		return jtag_write_flash_block( obj, start_addr, buf, len, FALSE,FALSE);
@@ -794,11 +821,20 @@ BOOL ec2_write_flash_auto_erase( EC2DRV *obj, uint8_t *buf,
 	uint16_t last_sector = end_addr / obj->dev->flash_sector_size;
 	int i;
 
-	// Erase sectors involved
-	for( i=first_sector; i<=last_sector; i++ )
-	{
-		ec2_erase_flash_sector( obj, i*obj->dev->flash_sector_size  );
+	// check if the flash is locked, in which case we need to do a complete
+	//   flash erase
+	if (flash_lock_byte(obj) != 0xff) {
+		ec2_erase_flash (obj);
 	}
+	// otherwise we can just erase the sectors we will be writing to
+	else {
+		// Erase sectors involved
+		for( i=first_sector; i<=last_sector; i++ )
+		{
+			ec2_erase_flash_sector( obj, i*obj->dev->flash_sector_size  );
+		}
+	}
+	// finally, write the data
 	ec2_write_flash( obj, buf, start_addr, len );
 	
 	return TRUE;	///< @TODO check to successful erase
@@ -927,7 +963,9 @@ BOOL ec2_read_flash_scratchpad( EC2DRV *obj, uint8_t *buf,
 	if( check_scratchpad_range( obj, start_addr, len ) )
 	{
 		if( obj->mode==JTAG )
-			return jtag_read_flash( obj, buf, start_addr, len,TRUE );
+			return jtag_read_flash( obj, buf, start_addr, len, TRUE );
+		else
+			return c2_read_flash( obj, buf, start_addr, len, TRUE );
 	}
 	return FALSE;
 }
@@ -950,7 +988,8 @@ BOOL ec2_write_flash_scratchpad( EC2DRV *obj, uint8_t *buf,
 		return FALSE;
 	if( obj->mode==JTAG )
 		return jtag_write_flash_block( obj, start_addr, buf, len, TRUE, TRUE );
-	return FALSE;
+	else
+		return FALSE;
 }
 
 /** Write to the flash scratchpad with merge.
@@ -1001,6 +1040,8 @@ done:
 */
 BOOL ec2_erase_flash_scratchpad( EC2DRV *obj )
 {
+	if( !obj->dev->has_scratchpad )
+		return TRUE;
 	DUMP_FUNC();
 	uint8_t num_sec = obj->dev->scratchpad_len/obj->dev->scratchpad_sector_size;
 	int i;
@@ -1009,7 +1050,7 @@ BOOL ec2_erase_flash_scratchpad( EC2DRV *obj )
 	{
 		ok &= ec2_erase_flash_scratchpad_sector( obj,
 			obj->dev->scratchpad_start + i*obj->dev->scratchpad_sector_size );
-	};
+	}
 	DUMP_FUNC_END();
 	return ok;
 }
@@ -1023,8 +1064,11 @@ BOOL ec2_erase_flash_scratchpad( EC2DRV *obj )
 */
 BOOL ec2_erase_flash_scratchpad_sector( EC2DRV *obj, uint32_t sector_addr )
 {
-//	printf("erasing scratchpad sector at addr=0x%05x\n",sector_addr);
-	return jtag_erase_flash_sector( obj, sector_addr, TRUE );
+	printf("erasing scratchpad sector at addr=0x%05x\n",sector_addr);
+	if( obj->mode==JTAG )
+		return jtag_erase_flash_sector( obj, sector_addr, TRUE );
+	else
+		return c2_erase_flash_sector( obj, sector_addr, TRUE );
 }
 
 
@@ -1233,13 +1277,13 @@ BOOL ec2_target_halt( EC2DRV *obj )
 
 	// loop allows upto 8 retries 
 	// returns 0x01 of successful stop, 0x00 otherwise suchas already stopped	
-	for( i=0; i<8; i++ )
+	for( i=0; i<16; i++ )
 	{
 		if( ec2_target_halt_poll( obj ) )
 			return TRUE;	// success
 	}
 	printf("ERROR: target would not stop after halt!\n");
-	return r;
+	return FALSE;
 }
 
 
@@ -1286,10 +1330,17 @@ uint8_t flash_lock_byte( EC2DRV *obj )
 	DUMP_FUNC();
 	if( obj->dev->lock_type==FLT_SINGLE || obj->dev->lock_type==FLT_SINGLE_ALT)
 	{
-		return 0;	/// @TODO implement
+		char buf[5];
+		
+		ec2_read_flash( obj, buf, obj->dev->lock, 1 );
+		return buf[0];
 	}
-	else
-		return 0;	// oops device dosen't have a single lock byte
+	else {
+		char buf[5];
+		
+		ec2_read_flash( obj, buf, obj->dev->write_lock, 1 );
+		return buf[0];
+	}
 }
 
 /** Read the flash read lock byte
@@ -1328,29 +1379,24 @@ uint8_t flash_write_erase_lock( EC2DRV *obj )
 	\param len		number of bytes long the block to test is.
 	\returns		TRUE if all addresses in range are valid, FALSE otherwise.
  */
-static BOOL check_flash_range( EC2DRV *obj, uint32_t addr, uint32_t len )
+static BOOL check_flash_range( EC2DRV *obj, uint32_t addr, int len )
 {
-	uint32_t bottom, top;
-	bottom = addr;
-	top = bottom+len-1;
-	
+	int bottom, top;
+	bottom = (int) addr;
+	top = bottom+(int)len-1;
+
 	// is block outside flash area for this device? device flash area ?
-	if( !((bottom<(obj->dev->flash_size-1)) &&
-			  (top<(obj->dev->flash_size-1) )) )
+	if ((bottom > (obj->dev->flash_size-1)) ||
+			  (top > (obj->dev->flash_size-1)))
 		return FALSE;
 	
-	// I'm tired so simple scan for test,
-	// There is a better way.
-	uint32_t i;
-	for( i=bottom; i<=top; i++)
-	{
-		if( i>=obj->dev->flash_reserved_bottom &&
-				  i<=obj->dev->flash_reserved_top )
-		{
-			printf("ERROR: attempt to write to reserved flash area!\n");
-			return FALSE;	// in reserved area
-		}
-	}
+	// check if we are writing to the reserved flash portion
+	if (((bottom <= obj->dev->flash_reserved_top) &&
+		(bottom >= obj->dev->flash_reserved_bottom)) ||
+		((top <= obj->dev->flash_reserved_top) &&
+		(top >= obj->dev->flash_reserved_bottom)))
+		return FALSE;
+
 	return TRUE;
 }
 
@@ -1435,7 +1481,7 @@ static int getBP( EC2DRV *obj, uint32_t addr )
 	for( i=0; i<4; i++ )
 		if( ( obj->bpaddr[i]==addr) && ((obj->bp_flags>>i)&0x01) )
 			return i;
-	printf("No active breakpoints with this address\n");
+	//printf("No active breakpoints with this address\n");
 	return -1;	// No active breakpoints with this address
 }
 
@@ -1888,6 +1934,7 @@ static void print_buf( char *buf, int len )
 ///////////////////////////////////////////////////////////////////////////////
 extern int usb_debug;		///< control libusb debugging
 
+#ifdef __GLIBC__
 #define USB_ERROR(libusbfunc,num)					\
 	error_at_line(	-1,								\
 					 -num,							\
@@ -1897,6 +1944,14 @@ extern int usb_debug;		///< control libusb debugging
 					libusbfunc,						\
 					__PRETTY_FUNCTION__,			\
 					num)
+#else
+#define USB_ERROR(libusbfunc,num)					         \
+    do {                                                     \
+        fprintf(stderr, "ec2drv: %s: %d: %s returned %d\n",  \
+				__FILE__, __LINE__, libusbfunc, num);        \
+        exit(1);                                             \
+    } while (0)
+#endif
 
 
 /* write a complete command to the EC3.
@@ -1913,13 +1968,16 @@ static BOOL write_usb( EC2DRV *obj, char *buf, int len )
 		printf("TX: ");
 		print_buf(txbuf,len+1);
 	}
+	
 	r = usb_interrupt_write(obj->ec3,
 							obj->dbg_info->usb_out_endpoint,
 							txbuf, len + 1, 1000 );
+	
 	if(r<0)
 		USB_ERROR("usb_interrupt_write",r);
 
 	free( txbuf );
+	//usleep(10);
 	return r > 0;
 }
 
@@ -1950,7 +2008,8 @@ static BOOL read_usb( EC2DRV *obj, char *buf, int len )
 	char *rxbuf = malloc( 64 );
 	r = usb_interrupt_read( obj->ec3,
 							obj->dbg_info->usb_in_endpoint,
-							rxbuf, 64, 10000 );	// 10 second timeout.
+							rxbuf, 64, 8000 );	// 8 second timeout.
+	
 	if( obj->debug )
 	{
 		printf("RX: ");
@@ -1960,6 +2019,7 @@ static BOOL read_usb( EC2DRV *obj, char *buf, int len )
 	free( rxbuf );
 	if(r<0)
 		USB_ERROR("usb_interrupt_read",r);
+	//usleep(10);
 	return r > 0;
 }
 
@@ -1989,24 +2049,27 @@ BOOL open_ec3( EC2DRV *obj, const char *port )
 	BOOL match = FALSE;
 	int r;
 	DBG_ADAPTER_INFO *dbg_info;
-	
 	//usb_debug = 4;	// enable libusb debugging
 	usb_init();
+	//printf ("test1 %s\n",port);
 	usb_find_busses();
+	//printf ("test2\n");
 	usb_find_devices();
+	//printf ("test3\n");
 	busses = usb_get_busses(); 
-
+	//printf ("test4\n");
 	ec3dev = 0;
 	for( bus = busses; bus; bus = bus->next )
 	{
 		struct usb_device *dev;
 		for( dev = bus->devices; dev; dev = dev->next )
 		{
+			//printf ("test5\n");
 			dbg_info =
 				ec2_GetDbgInfo(dev->descriptor.idVendor, dev->descriptor.idProduct);
+			//printf ("test6\n");	
 			if(dbg_info)
 			{
-				printf("Found %s\n",dbg_info->name);
 				if( port==0 )
 				{
 					// check we can actually talk to the device
@@ -2039,10 +2102,10 @@ BOOL open_ec3( EC2DRV *obj, const char *port )
 						USB_ERROR("usb_get_string_simple",r);
 
 					// check for matching serial number
-//					printf("s='%s'\n",s);
-					r = usb_release_interface( obj->ec3, 0 );
-					if(r<0)
-						USB_ERROR("usb_release_interface",r);
+					//printf("s='%s'\n",s);
+					//r = usb_release_interface( obj->ec3, 0 );
+					//if(r<0)
+					//	USB_ERROR("usb_release_interface",r);
 					r = usb_close(obj->ec3);
 					if(r<0)
 						USB_ERROR("usb_close",r);
@@ -2057,9 +2120,9 @@ BOOL open_ec3( EC2DRV *obj, const char *port )
 			}
 			else
 			{
-				printf( "0x%04x, 0x%04x\n",
-						dev->descriptor.idVendor,
-						dev->descriptor.idProduct );
+				//printf( "0x%04x, 0x%04x\n",
+						//dev->descriptor.idVendor,
+						//dev->descriptor.idProduct );
 			}
 		}
 	}
